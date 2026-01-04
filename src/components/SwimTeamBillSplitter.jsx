@@ -1,0 +1,548 @@
+import React, { useState, useEffect } from 'react';
+import { Plus, Trash2, Users, Receipt, Copy, Save, Upload, X, UserPlus, FolderOpen, History, Utensils } from 'lucide-react';
+import headerBg from '../assets/header_bg.png';
+
+const DEFAULT_MEMBERS = ['꾸기', '그니', '라라', '라니', '뿌뿌', '쏘', '쮸', '유니', '하기', '행자', '후니'];
+const STORAGE_KEY = 'billSplitter_saves';
+
+const SwimTeamBillSplitter = () => {
+    const [rounds, setRounds] = useState([]);
+    const [members, setMembers] = useState(DEFAULT_MEMBERS);
+    const [pageTitle, setPageTitle] = useState('유등 정산타임');
+
+    // New Round State
+    const [roundName, setRoundName] = useState('');
+    const [roundCost, setRoundCost] = useState('');
+    const [selectedMembers, setSelectedMembers] = useState([]); // Default none selected
+
+    // Member Management State
+    const [newMemberName, setNewMemberName] = useState('');
+    const [isManageMode, setIsManageMode] = useState(false);
+
+    // Load/Save State
+    const [isLoadMode, setIsLoadMode] = useState(false);
+    const [savedFiles, setSavedFiles] = useState([]);
+
+    // Refresh saved files list
+    useEffect(() => {
+        if (isLoadMode) {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                try {
+                    setSavedFiles(JSON.parse(saved));
+                } catch (e) {
+                    setSavedFiles([]);
+                }
+            } else {
+                setSavedFiles([]);
+            }
+        }
+    }, [isLoadMode]);
+
+    const toggleMemberSelection = (member) => {
+        if (selectedMembers.includes(member)) {
+            setSelectedMembers(selectedMembers.filter(m => m !== member));
+        } else {
+            setSelectedMembers([...selectedMembers, member]);
+        }
+    };
+
+    const selectAll = () => setSelectedMembers(members);
+    const deselectAll = () => setSelectedMembers([]);
+
+    const addRound = (e) => {
+        e.preventDefault();
+        if (!roundName.trim() || !roundCost || selectedMembers.length === 0) return;
+
+        const newRound = {
+            id: Date.now(),
+            name: roundName,
+            cost: parseFloat(roundCost),
+            members: selectedMembers,
+        };
+
+        setRounds([...rounds, newRound]);
+
+        // Reset form
+        setRoundName('');
+        setRoundCost('');
+        setSelectedMembers([]);
+    };
+
+    const removeRound = (id) => {
+        setRounds(rounds.filter(r => r.id !== id));
+    };
+
+    // Calculate totals per person
+    const calculateTotals = () => {
+        const totals = {};
+        members.forEach(m => totals[m] = 0);
+
+        rounds.forEach(round => {
+            const splitAmount = round.cost / round.members.length;
+            round.members.forEach(member => {
+                if (totals[member] !== undefined) {
+                    totals[member] += splitAmount;
+                }
+            });
+        });
+
+        return totals;
+    };
+
+    const memberTotals = calculateTotals();
+    const totalCollected = Object.values(memberTotals).reduce((a, b) => a + b, 0);
+
+    // Member Management
+    const addMember = (e) => {
+        e.preventDefault();
+        if (!newMemberName.trim()) return;
+        if (members.includes(newMemberName.trim())) {
+            alert('이미 존재하는회원입니다.');
+            return;
+        }
+        setMembers([...members, newMemberName.trim()]);
+        setNewMemberName('');
+    };
+
+    const removeMember = (memberToRemove) => {
+        const isInvolved = rounds.some(r => r.members.includes(memberToRemove));
+        if (isInvolved) {
+            alert('이미 정산에 포함된 회원은 삭제할 수 없습니다. 해당 회차를 먼저 삭제해주세요.');
+            return;
+        }
+        setMembers(members.filter(m => m !== memberToRemove));
+    };
+
+    // LocalStorage Save
+    const saveToStorage = () => {
+        if (rounds.length === 0) {
+            alert('저장할 내역이 없습니다.');
+            return;
+        }
+
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0];
+        const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '');
+        const saveName = `${dateStr}_${timeStr}_${rounds.length}차`;
+
+        const newSave = {
+            id: Date.now(),
+            name: saveName,
+            timestamp: now.toISOString(),
+            data: {
+                title: pageTitle,
+                members,
+                rounds
+            }
+        };
+
+        const existing = localStorage.getItem(STORAGE_KEY);
+        const saves = existing ? JSON.parse(existing) : [];
+        const updatedSaves = [newSave, ...saves];
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSaves));
+        alert(`저장되었습니다: ${saveName}`);
+    };
+
+    // Text Generation Helper
+    const generateResultText = () => {
+        // Helper to pretty print numbers
+        const fmt = (n) => Math.round(n).toLocaleString();
+
+        // Generate Round Details
+        const roundDetails = rounds.map((r, i) => {
+            const perPerson = r.cost / r.members.length;
+            return `${r.name}\n참석: ${r.members.join(', ')} (${r.members.length}명)\n총 ${fmt(r.cost)}원 ÷ ${r.members.length}명 = ${fmt(perPerson)}원`;
+        }).join('\n\n');
+
+        // Generate Member Details
+        const memberDetails = members
+            .filter(m => memberTotals[m] > 0) // Only those who pay
+            .map(m => {
+                // Find which rounds this member attended
+                const attendedRounds = rounds.filter(r => r.members.includes(m));
+                const calcString = attendedRounds
+                    .map(r => {
+                        const amount = r.cost / r.members.length;
+                        const shortName = r.name.split(' ')[0];
+                        return `${shortName} ${fmt(amount)}원`;
+                    })
+                    .join(' + ');
+
+                return `${m}:\n${calcString} = ${fmt(memberTotals[m])}원`;
+            })
+            .join('\n\n');
+
+        return `🏊 ${pageTitle} 🏊
+전체 ${rounds.length}차 회식
+
+📋 차수별 상세 내역
+─────────────────
+
+${roundDetails}
+
+💸 총 합계: ${totalCollected.toLocaleString()}원
+
+
+💰 회원별 입금액
+─────────────────
+
+${memberDetails}
+
+
+
+정산내용을 확인하신 후 입금 부탁드립니다. 😊`;
+    };
+
+    // Preview Logic
+    const [showPreview, setShowPreview] = useState(false);
+    const [previewContent, setPreviewContent] = useState('');
+
+    const handleOpenPreview = () => {
+        if (!showPreview) {
+            const text = generateResultText();
+            setPreviewContent(text);
+        }
+        setShowPreview(!showPreview);
+    };
+
+    const handleCopy = () => {
+        navigator.clipboard.writeText(previewContent);
+        alert("정산 내용이 복사되었습니다!");
+    };
+
+    // LocalStorage Load
+    const loadFromStorage = (saveItem) => {
+        if (!window.confirm('현재 작업 중인 내용은 사라집니다. 불러오시겠습니까?')) return;
+
+        const { title, members: savedMembers, rounds: savedRounds } = saveItem.data;
+        if (savedMembers) setMembers(savedMembers);
+        if (savedRounds) setRounds(savedRounds);
+        if (title) setPageTitle(title);
+
+        setIsLoadMode(false);
+    };
+
+    const deleteSave = (id) => {
+        if (!window.confirm('정말 삭제하시겠습니까?')) return;
+        const updated = savedFiles.filter(s => s.id !== id);
+        setSavedFiles(updated);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    };
+
+    return (
+        <div className="w-full max-w-2xl bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden font-sans border border-white/20 ring-1 ring-black/5">
+            {/* Header with Background Image */}
+            {/* Header with Background Image */}
+            <div
+                className="relative bg-[#FDACAC] text-white h-32 transition-all"
+                style={{
+                    backgroundImage: `url(${headerBg})`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center'
+                }}
+            >
+                <div className="absolute inset-0 bg-[#FDACAC]/90 mix-blend-multiply" /> {/* Solid Tint Overlay */}
+                <div className="absolute inset-0 p-6 flex flex-col justify-between">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <h2 className="text-4xl font-black flex items-center gap-3 drop-shadow-md tracking-tight text-white">
+                                <Utensils className="h-8 w-8 text-white drop-shadow-sm" />
+                                <span className="text-white drop-shadow-md">
+                                    {pageTitle}
+                                </span>
+                            </h2>
+                            <p className="text-white/90 mt-2 font-bold text-lg drop-shadow-md">총무야 내가 도와줄게!</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="p-6 space-y-8">
+
+                {/* Save File List (Load Mode) */}
+
+
+                {/* Member Management Toggle */}
+                <div className="flex justify-end">
+                    <button
+                        onClick={() => setIsManageMode(!isManageMode)}
+                        className="text-sm font-bold text-[#FF8B8D] hover:text-[#FF7173] transition-colors flex items-center gap-1 py-2"
+                    >
+                        {isManageMode ? '관리 닫기' : '⚙️ 유딩이 추가/삭제 하기'}
+                    </button>
+                </div>
+
+                {/* Member Management UI */}
+                {isManageMode && (
+                    <section className="bg-gray-50 p-4 rounded-lg border border-gray-200 space-y-4 animate-in fade-in slide-in-from-top-2">
+                        <h3 className="font-semibold text-gray-700 flex items-center gap-2">
+                            <UserPlus className="h-4 w-4" />
+                            회원 관리 / 멤버 {members.length}명
+                        </h3>
+                        <div className="flex flex-wrap gap-2">
+                            {members.map(m => (
+                                <div key={m} className="bg-white px-3 py-1 rounded-full border border-gray-200 text-sm flex items-center gap-2 shadow-sm">
+                                    {m}
+                                    <button onClick={() => removeMember(m)} className="text-gray-400 hover:text-red-500">
+                                        <X className="h-3 w-3" />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                        <form onSubmit={addMember} className="flex gap-2">
+                            <input
+                                type="text"
+                                value={newMemberName}
+                                onChange={(e) => setNewMemberName(e.target.value)}
+                                placeholder="새 회원 이름"
+                                className="flex-1 px-3 py-2 border border-gray-300 rounded focus:border-blue-500 outline-none text-sm"
+                            />
+                            <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 whitespace-nowrap">
+                                추가
+                            </button>
+                        </form>
+                    </section>
+                )}
+
+                {/* Round Input Section */}
+                <section className="space-y-4 border-b pb-6 border-gray-100">
+                    <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                        새로운 회차 입력
+                        <span className="text-sm font-normal text-gray-400 ml-1">(무한대로 입력 가능!)</span>
+                    </h3>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-bold text-gray-600 mb-1.5 ml-1">회차명</label>
+                            <input
+                                type="text"
+                                value={roundName}
+                                onChange={(e) => setRoundName(e.target.value)}
+                                placeholder="예: 1차 횟집"
+                                className="w-full px-5 py-3 bg-[#FFECC7]/40 border-0 rounded-2xl focus:ring-2 focus:ring-[#FFACAD] focus:bg-white transition-all outline-none font-medium placeholder:text-gray-400"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-gray-600 mb-1.5 ml-1">결제 금액</label>
+                            <div className="relative">
+                                {/* Fixed: '원' moved to right */}
+                                <input
+                                    type="number"
+                                    step="100"
+                                    value={roundCost}
+                                    onChange={(e) => setRoundCost(e.target.value)}
+                                    placeholder="0"
+                                    className="w-full px-5 py-3 bg-[#FFECC7]/40 border-0 rounded-2xl focus:ring-2 focus:ring-[#FFACAD] focus:bg-white transition-all outline-none text-right pr-10 font-bold text-gray-800 placeholder:text-gray-300"
+                                />
+                                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm">원</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div className="flex justify-between items-center mb-2">
+                            <label className="block text-sm font-medium text-gray-700">참석 회원 선택 ({selectedMembers.length}명)</label>
+                            <div className="space-x-2 text-sm">
+                                <button type="button" onClick={selectAll} className="text-blue-600 hover:text-blue-800 font-medium">전체 선택</button>
+                                <span className="text-gray-300">|</span>
+                                <button type="button" onClick={deselectAll} className="text-gray-500 hover:text-gray-700">전체 해제</button>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                            {members.map(member => (
+                                <button
+                                    key={member}
+                                    type="button"
+                                    onClick={() => toggleMemberSelection(member)}
+                                    className={`px-3 py-2 rounded-xl text-sm transition-all font-bold shadow-sm active:scale-95 ${selectedMembers.includes(member)
+                                        ? 'bg-[#FFACAD] text-white shadow-[#FFACAD]/30 ring-0 transform -translate-y-0.5'
+                                        : 'bg-white border border-gray-100 text-gray-400 hover:bg-[#FFECC7]/30 hover:text-gray-600'
+                                        }`}
+                                >
+                                    {member}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={addRound}
+                        disabled={!roundName || !roundCost || selectedMembers.length === 0}
+                        className="w-full py-4 bg-[#FDACAC] text-white rounded-2xl font-bold text-lg hover:bg-[#FF8B8D] disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-md shadow-[#FDACAC]/20 active:scale-[0.99]"
+                    >
+                        정산 목록에 추가하기
+                    </button>
+                </section>
+
+                {/* Rounds List Section */}
+                {rounds.length > 0 && (
+                    <section className="space-y-3">
+                        <h3 className="text-lg font-bold text-gray-800">진행된 회차 목록</h3>
+                        <div className="space-y-3">
+                            {rounds.map((round) => (
+                                <div key={round.id} className="group flex items-center justify-between bg-white border border-gray-100 p-5 rounded-2xl shadow-sm hover:shadow-md transition-all">
+                                    <div>
+                                        <div className="font-bold text-gray-900">{round.name}</div>
+                                        <div className="text-sm text-gray-500 mt-1">
+                                            <span className="font-semibold text-[#FF8B8D]">{(round.cost).toLocaleString()}원</span>
+                                            <span className="mx-2">•</span>
+                                            {round.members.length}명 참석 (인당 {(round.cost / round.members.length).toLocaleString()}원)
+                                        </div>
+                                        <div className="text-xs text-gray-400 mt-1">
+                                            {round.members.join(', ')}
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => removeRound(round.id)}
+                                        className="text-gray-400 hover:text-red-500 p-2"
+                                    >
+                                        <Trash2 className="h-5 w-5" />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                )}
+
+                {/* Final Settlement Section */}
+                <section className="bg-white rounded-3xl border border-gray-200/60 overflow-hidden shadow-2xl shadow-rose-900/5">
+                    <div className="bg-[#FDACAC] text-white px-7 py-5 flex justify-between items-center">
+                        <div className="flex items-center gap-3 font-bold text-lg">
+                            <Receipt className="h-6 w-6 text-[#FFACAD]" />
+                            최종 정산 결과
+                        </div>
+                    </div>
+
+                    <div className="divide-y divide-gray-200">
+                        {members.map(member => {
+                            const amount = memberTotals[member];
+                            if (amount === 0) return null; // Only show members who need to pay
+                            return (
+                                <div key={member} className="flex justify-between items-center px-6 py-3 hover:bg-slate-100 transition">
+                                    <span className="font-medium text-gray-900">{member}</span>
+                                    <span className="font-bold text-slate-800">{Math.round(amount).toLocaleString()}원</span>
+                                </div>
+                            );
+                        })}
+
+                        {/* Total Sum Display Moved to Bottom */}
+                        <div className="px-6 py-4 bg-[#FDACAC]/10 flex justify-between items-center border-t border-[#FDACAC]/20">
+                            <span className="font-bold text-[#b57a7a]">총 합계</span>
+                            <span className="font-bold text-xl text-[#a36666]">{totalCollected.toLocaleString()}원</span>
+                        </div>
+                    </div>
+
+                    {/* Save File List (Load Mode) */}
+                    {isLoadMode && (
+                        <div className="px-4 pb-4 bg-gray-50 animate-in fade-in slide-in-from-bottom-2">
+                            <section className="bg-white p-4 rounded-lg border border-gray-200 space-y-3 shadow-sm">
+                                <h3 className="font-bold text-slate-700 flex items-center gap-2 text-sm">
+                                    <History className="h-4 w-4" />
+                                    저장된 내역 불러오기
+                                </h3>
+                                {savedFiles.length === 0 ? (
+                                    <p className="text-xs text-gray-500 py-4 text-center">저장된 내역이 없습니다.</p>
+                                ) : (
+                                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                                        {savedFiles.map(file => (
+                                            <div key={file.id} className="flex items-center justify-between bg-slate-50 p-2 rounded border border-gray-100 hover:border-blue-300 transition group">
+                                                <button
+                                                    onClick={() => loadFromStorage(file)}
+                                                    className="flex-1 text-left"
+                                                >
+                                                    <div className="font-semibold text-gray-800 text-sm">{file.name}</div>
+                                                    <div className="text-[10px] text-gray-500">{new Date(file.timestamp).toLocaleString()}</div>
+                                                </button>
+                                                <button
+                                                    onClick={() => deleteSave(file.id)}
+                                                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-white rounded transition"
+                                                >
+                                                    <Trash2 className="h-3 w-3" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                <button
+                                    onClick={() => setIsLoadMode(false)}
+                                    className="w-full py-2 text-xs text-gray-500 hover:bg-gray-100 rounded transition border border-gray-200"
+                                >
+                                    닫기
+                                </button>
+                            </section>
+                        </div>
+                    )}
+
+                    {/* Action Buttons Footer */}
+                    <div className="p-4 bg-gray-50 border-t border-gray-200 space-y-2">
+                        <div className="flex gap-2">
+                            <button
+                                onClick={saveToStorage}
+                                className="flex-1 flex items-center justify-center gap-2 p-4 bg-white border-2 border-gray-100 hover:border-[#FF8B8D] hover:bg-[#FF8B8D]/5 text-gray-600 rounded-2xl transition font-bold shadow-sm group"
+                            >
+                                <Save className="h-5 w-5 group-hover:text-[#FF8B8D] transition-colors" />
+                                저장하기
+                            </button>
+                            <button
+                                onClick={() => setIsLoadMode(!isLoadMode)}
+                                className={`flex-1 flex items-center justify-center gap-2 p-4 border-2 rounded-2xl transition font-bold shadow-sm ${isLoadMode
+                                    ? 'bg-[#FFD1D0]/20 border-[#FFD1D0] text-[#8c5a5a]'
+                                    : 'bg-white border-gray-100 hover:border-[#FFD1D0]/50 hover:bg-[#FFD1D0]/10 text-gray-600'
+                                    }`}
+                            >
+                                <FolderOpen className="h-5 w-5" />
+                                불러오기
+                            </button>
+                        </div>
+
+                        <button
+                            onClick={handleOpenPreview}
+                            className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl transition-all font-bold text-lg shadow-lg active:scale-[0.99] ${showPreview
+                                ? 'bg-gray-100 text-gray-600 shadow-none'
+                                : 'bg-[#FDACAC] hover:bg-[#FF8B8D] text-white shadow-[#FDACAC]/20'
+                                }`}
+                        >
+                            <Copy className="h-5 w-5" />
+                            {showPreview ? '미리보기 닫기' : '내용복사 (카톡 공유)'}
+                        </button>
+
+                        {/* Inline Preview Section */}
+                        {showPreview && (
+                            <div className="mt-4 border-2 border-[#FDACAC]/20 rounded-2xl overflow-hidden bg-white animate-in slide-in-from-top-2 duration-300">
+                                <div className="bg-[#FDACAC]/5 p-3 border-b border-[#FDACAC]/10 flex justify-between items-center">
+                                    <span className="text-sm font-bold text-[#FDACAC]">복사 내용 미리보기</span>
+                                    <button onClick={() => setShowPreview(false)} className="text-gray-400 hover:text-gray-600">
+                                        <X className="h-4 w-4" />
+                                    </button>
+                                </div>
+                                <div className="p-4 bg-slate-50 max-h-[400px] overflow-auto">
+                                    <pre className="whitespace-pre-wrap font-mono text-xs sm:text-sm text-gray-700">
+                                        {previewContent}
+                                    </pre>
+                                </div>
+                                <div className="p-3 bg-white border-t border-gray-100">
+                                    <button
+                                        onClick={handleCopy}
+                                        className="w-full py-3 text-white bg-[#FDACAC] hover:bg-[#FF8B8D] rounded-xl font-bold shadow-sm transition flex items-center justify-center gap-2 active:scale-[0.98]"
+                                    >
+                                        <Copy className="h-5 w-5" />
+                                        이 내용으로 복사하기
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </section>
+            </div>
+
+
+
+
+        </div>
+    );
+};
+
+export default SwimTeamBillSplitter;
